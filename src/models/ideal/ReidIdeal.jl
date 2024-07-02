@@ -1,11 +1,22 @@
 abstract type PolynomialIdealModel <: IdealModel end
 
 struct ReidIdealParam <: EoSParam
-    coeffs::SingleParam{NTuple{5,Float64}}
+    a::SingleParam{Float64}
+    b::SingleParam{Float64}
+    c::SingleParam{Float64}
+    d::SingleParam{Float64}
+    e::SingleParam{Float64}
     reference_state::ReferenceState
 end
 
-function reid_coeffs(a::SingleParameter,b::SingleParameter,c::SingleParameter,d::SingleParameter,e::SingleParameter,comps::Vector{String})
+function reid_coeffs(
+    a::SingleParameter,
+    b::SingleParameter,
+    c::SingleParameter,
+    d::SingleParameter,
+    e::SingleParameter,
+    comps::Vector{String},
+)
     comps = a.components
     a = a.values
     b = b.values
@@ -13,19 +24,32 @@ function reid_coeffs(a::SingleParameter,b::SingleParameter,c::SingleParameter,d:
     d = d.values
     _e = e == nothing ? FillArrays.Zeros(length(comps)) : e.values
 
-    return reid_coeffs(a,b,c,d,_e,comps)
+    return reid_coeffs(a, b, c, d, _e, comps)
 end
 
-function reid_coeffs(a::AbstractVector,b::AbstractVector,c::AbstractVector,d::AbstractVector,comps::Vector{String})
+function reid_coeffs(
+    a::AbstractVector,
+    b::AbstractVector,
+    c::AbstractVector,
+    d::AbstractVector,
+    comps::Vector{String},
+)
     n = length(a)
-    coeffs = [(a[i],b[i],c[i],d[i],zero(a[i])) for i in 1:n]
-    SingleParam("Reid Coefficients",comps,coeffs)
+    coeffs = [(a[i], b[i], c[i], d[i], zero(a[i])) for i = 1:n]
+    SingleParam("Reid Coefficients", comps, coeffs)
 end
 
-function reid_coeffs(a::AbstractVector,b::AbstractVector,c::AbstractVector,d::AbstractVector,e::AbstractVector,comps::Vector{String})
+function reid_coeffs(
+    a::AbstractVector,
+    b::AbstractVector,
+    c::AbstractVector,
+    d::AbstractVector,
+    e::AbstractVector,
+    comps::Vector{String},
+)
     n = length(a)
-    coeffs = [(a[i],b[i],c[i],d[i],e[i]) for i in 1:n]
-    SingleParam("Reid Coefficients",comps,coeffs)
+    coeffs = [(a[i], b[i], c[i], d[i], e[i]) for i = 1:n]
+    SingleParam("Reid Coefficients", comps, coeffs)
 end
 
 abstract type ReidIdealModel <: PolynomialIdealModel end
@@ -86,33 +110,34 @@ ReidIdeal
 export ReidIdeal
 default_locations(::Type{ReidIdeal}) = ["ideal/ReidIdeal.csv"]
 default_ignore_missing_singleparams(::Type{ReidIdeal}) = ["e"]
-function transform_params(::Type{ReidIdeal},params,components)
-    a,b,c,d = params["a"],params["b"],params["c"],params["d"]
-    e = get(params,"e") do
-        SingleParam("e",components)
+function transform_params(::Type{ReidIdeal}, params, components)
+    e = get(params, "e") do
+        SingleParam("e", components)
     end
-    params["coeffs"] = reid_coeffs(a,b,c,d,e,components)
     return params
 end
 
 recombine_impl!(model::ReidIdealModel) = model
 
-evalcoeff(::ReidIdealModel,coeffs,T,lnT = log(T)) = evalpoly(T,coeffs)
-
-function eval∫coeff(::ReidIdealModel,coeffs,T,lnT = log(T))
-    n = length(coeffs)
-    div1 = NTuple{n,Int}(1:n)
-    ∫poly = coeffs ./ div1
-    return evalpoly(T,∫poly)*T
+evalcoeff(::ReidIdealModel, a, b, c, d, e, T, lnT = log(T)) = begin
+    # aᵢ  + bᵢT + cᵢT^2 + dᵢT^3 + eᵢT^4
+    return a + b * T + c * T^2 + d * T^3 + e * T^4
 end
 
-function eval∫coeffT(::ReidIdealModel,coeffs,T,lnT = log(T))
-    n = length(coeffs)
-    div1 = NTuple{n-1,Int}(1:(n-1))
-    A = first(coeffs)
-    coeffs1 = coeffs[2:end]
+function eval∫coeff(::ReidIdealModel, a, b, c, d, e, T, lnT = log(T))
+    n = 5
+    div1 = NTuple{n,Int}(1:n)
+    ∫poly = (a, b, c, d, e) ./ div1
+    return evalpoly(T, ∫poly) * T
+end
+
+function eval∫coeffT(::ReidIdealModel, a, b, c, d, e, T, lnT = log(T))
+    n = 5
+    div1 = NTuple{n - 1,Int}(1:(n-1))
+    A = a
+    coeffs1 = (b, c, d, e)
     ∫polyT = coeffs1 ./ div1
-    return evalpoly(T,∫polyT)*T + A*lnT
+    return evalpoly(T, ∫polyT) * T + A * lnT
 end
 
 function a_ideal(model::PolynomialIdealModel, V, T, z)
@@ -120,33 +145,83 @@ function a_ideal(model::PolynomialIdealModel, V, T, z)
     polycoeff = model.params.coeffs.values
     #return sum(x[i]*(log(z[i]/V) + 1/(R̄*T)*(sum(polycoeff[k][i]/k*(T^k-298^k) for k in 1:4)) -
     #    1/R̄*((polycoeff[k][1]-R̄)*log(T/298)+sum(polycoeff[k][i]/(k-1)*(T^(k-1)-298^(k-1)) for k in 2:4))) for i in @comps)
-    V⁻¹ = 1/V
-    res = zero(V+T+first(z))
+    V⁻¹ = 1 / V
+    res = zero(V + T + first(z))
     Σz = sum(z)
-    RT = R̄*T
-    R̄⁻¹ = 1/R̄
-    RT⁻¹ = 1/RT
-    T0 = 298.
+    RT = R̄ * T
+    R̄⁻¹ = 1 / R̄
+    RT⁻¹ = 1 / RT
+    T0 = 298.0
     lnT0 = log(T0)
     lnT = log(T)
     @inbounds for i in @comps
-        coeffs = polycoeff[i] 
-        H = (eval∫coeff(model,coeffs,T,lnT) - eval∫coeff(model,coeffs,T0,lnT0))*RT⁻¹
-        TS = (eval∫coeffT(model,coeffs,T,lnT) - eval∫coeffT(model,coeffs,T0,lnT0))*R̄⁻¹
+        coeffs = polycoeff[i]
+        H = (eval∫coeff(model, coeffs, T, lnT) - eval∫coeff(model, coeffs, T0, lnT0)) * RT⁻¹
+        TS =
+            (eval∫coeffT(model, coeffs, T, lnT) - eval∫coeffT(model, coeffs, T0, lnT0)) *
+            R̄⁻¹
         α₀ᵢ = H - TS + lnT - lnT0
-        res += z[i]*α₀ᵢ
-        res += xlogx(z[i],V⁻¹)
+        res += z[i] * α₀ᵢ
+        res += xlogx(z[i], V⁻¹)
     end
-    return res/Σz
+    return res / Σz
 end
 
-function VT_isobaric_heat_capacity(model::PolynomialIdealModel,V,T,z=SA[1.])
+function a_ideal(model::ReidIdealModel, V, T, z)
+    a = model.params.a.values
+    b = model.params.b.values
+    c = model.params.c.values
+    d = model.params.d.values
+    e = model.params.e.values
+
+    V⁻¹ = 1 / V
+    res = zero(V + T + first(z))
+    Σz = sum(z)
+    RT = R̄ * T
+    R̄⁻¹ = 1 / R̄
+    RT⁻¹ = 1 / RT
+    T0 = 298.0
+    lnT0 = log(T0)
+    lnT = log(T)
+    @inbounds for i in @comps
+        coeffs = (a[i], b[i], c[i], d[i], e[i])
+        H =
+            (
+                eval∫coeff(model, coeffs..., T, lnT) -
+                eval∫coeff(model, coeffs..., T0, lnT0)
+            ) * RT⁻¹
+        TS =
+            (
+                eval∫coeffT(model, coeffs..., T, lnT) -
+                eval∫coeffT(model, coeffs..., T0, lnT0)
+            ) * R̄⁻¹
+        α₀ᵢ = H - TS + lnT - lnT0
+        res += z[i] * α₀ᵢ
+        res += xlogx(z[i], V⁻¹)
+    end
+    return res / Σz
+end
+
+function VT_isobaric_heat_capacity(model::PolynomialIdealModel, V, T, z = SA[1.0])
     coeff = model.params.coeffs.values
-    res = zero(T+first(z))
+    res = zero(T + first(z))
     Σz = sum(z)
     for i in @comps
-        pol = coeff[i]
-        res +=z[i]*evalcoeff(model,pol,T)
+        res += z[i] * evalcoeff(model, coeff, T)
     end
-    return res/Σz
+    return res / Σz
+end
+
+function VT_isobaric_heat_capacity(model::ReidIdealModel, V, T, z = SA[1.0])
+    a = model.params.a.values
+    b = model.params.b.values
+    c = model.params.c.values
+    d = model.params.d.values
+    e = model.params.e.values
+    res = zero(T + first(z))
+    Σz = sum(z)
+    for i in @comps
+        res += z[i] * evalcoeff(model, a[i], b[i], c[i], d[i], e[i], T)
+    end
+    return res / Σz
 end
